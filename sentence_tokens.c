@@ -8,8 +8,7 @@ int main(int argc, char *argv[]) {
 	ssize_t read;
 	int i = 0;
 	char delim[2] = ". ";
-	char *token;
-	char *buffer;
+	char *token, *buffer;
 
 	if(argv[1] == NULL) {
 		printf("no input file\n");
