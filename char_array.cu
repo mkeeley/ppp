@@ -7,6 +7,7 @@
 #define CHUNK_SIZE 32 
 #define LOCAL_HIST_SIZE 1024
 #define MAX_THREADS 4
+#define DEBUG 1
 
 __global__ void compute_hist(char *dev_text, int *dev_hist, int chunk_size, int size) {
 	unsigned int tid = blockDim.x * blockIdx.x + threadIdx.x;
@@ -23,15 +24,15 @@ __global__ void compute_hist(char *dev_text, int *dev_hist, int chunk_size, int 
 		if((c = dev_text[i]) == '\0') 
 			break;
 		c -= 97;
-		if(c >= 0 && c < 26) {
+		if(c >= 0 && c < 26) 
 			hist[c+offset]++;
-		}	
 	}	
-	
+
+#if DEBUG	
 	for(i = offset; i < ALPHABET_SIZE + offset; i++)  
 		if(hist[i] != 0)
 			printf("%d: %c: %d\n", tid, (i%26)+ 97, hist[i]); 
-
+#endif
 	__syncthreads();
 
 	if(tid == 0) {
