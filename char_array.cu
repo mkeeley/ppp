@@ -4,23 +4,28 @@
 #include <cuda.h>
 
 #define ALPHABET_SIZE 26
-#define CHUNK_SIZE 32 
+#define CHUNK_SIZE 26 
 #define LOCAL_HIST_SIZE 1024
-#define MAX_THREADS 4
-#define DEBUG 1
+#define MAX_THREADS 2
+#define DEBUG 0
 
 __global__ void compute_hist(char *dev_text, int *dev_hist, int chunk_size, int size) {
 	unsigned int tid = blockDim.x * blockIdx.x + threadIdx.x;
 	extern __shared__ int hist[];
 	int i = tid * chunk_size,
-	    end = i + chunk_size,
-	    offset = tid * ALPHABET_SIZE;
+	    j = 0,
+	    text_end = i + chunk_size,
+	    offset = tid * ALPHABET_SIZE,
+	    block_start = blockIdx.x * ALPHABET_SIZE * MAX_THREADS, // relative to histogram position
+	    block_total = (size/ALPHABET_SIZE)/MAX_THREADS;
 	char c = 0;
 
 	if(tid * ALPHABET_SIZE >= size)
 		return;
-	printf("tid: %d, start: %d, end: %d, hist offset: %d\n", tid, i, end, offset);	
-	for(;i<end;i++) {
+#if DEBUG
+	printf("tid: %d, start: %d, end: %d, hist offset: %d\n", tid, i, text_end, offset);	
+#endif
+	for(;i<text_end;i++) {
 		if((c = dev_text[i]) == '\0') 
 			break;
 		c -= 97;
@@ -35,18 +40,28 @@ __global__ void compute_hist(char *dev_text, int *dev_hist, int chunk_size, int 
 #endif
 	__syncthreads();
 
-	if(tid == 0) {
-		printf("size: %d\n", size);
-		int j = 0;
-		for(i = 0; i < ALPHABET_SIZE; i++)
-			for(j=1; j < size/ALPHABET_SIZE; j++) 
+	if(tid%MAX_THREADS == 0) {
+
+		printf("tid: %d, block_start: %d\n", tid, block_start);
+		for(i = block_start; i < block_start + ALPHABET_SIZE; i++)
+			for(j = 1; j < MAX_THREADS; j++) 
 				hist[i] += hist[i+(j*ALPHABET_SIZE)];
-		printf("total:\n");
-		for(i = 0; i < ALPHABET_SIZE; i++)
-			if(hist[i] != 0)
-				printf("%d: %c: %d\n", tid, i+ 97, hist[i]); 
 	}
-		
+
+	__syncthreads();
+
+	if(tid == 0){
+		printf("total blocks: %d\n", block_total);
+		for(i = 0; i < block_total; i++)
+			printf("\tblock %d:", i);
+		printf("\n");
+		for(i = 0; i < ALPHABET_SIZE; i++) {
+			printf("%c\t", i + 97);
+			for(j = 0; j < block_total; j++)
+				printf("%d\t\t", hist[i + (j * ALPHABET_SIZE * MAX_THREADS)]);
+			printf("\n");
+		}
+	}
 }
 
 int main(int argc, char **argv) {
@@ -57,6 +72,9 @@ int main(int argc, char **argv) {
 	char *text;
 	int hist[ALPHABET_SIZE] = {0};	
 	int BLOCKS = 0, THREADS = 0;
+	int *dev_hist;
+	char *dev_text;
+
 	if(argc != 2) {
 		printf("enter file name as first argument\n");
 		return 1;
@@ -68,8 +86,6 @@ int main(int argc, char **argv) {
 	fseek(fp, 0, SEEK_SET);
 	text = (char *)malloc(sz * sizeof(char));
 
-	int *dev_hist;
-	char *dev_text;
 
 	while((c = fgetc(fp)) != EOF) {
 		text[i++] = tolower(c);
