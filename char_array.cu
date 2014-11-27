@@ -19,11 +19,9 @@ __global__ void compute_hist(char *dev_text, int *dev_hist, int chunk_size, int 
 	    offset = threadIdx.x * ALPHABET_SIZE,
 	    block_start = blockIdx.x * ALPHABET_SIZE; 
 	char c = 0;
+
 	if((tid * ALPHABET_SIZE) >= size) 
 		return;
-#if DEBUG
-	printf("tid: %d, block: %d, start: %d, end: %d, hist offset: %d\n", tid, blockIdx.x, i, text_end, offset);	
-#endif
 	for(;i<text_end;i++) {
 		if((c = dev_text[i]) == '\0') 
 			break;
@@ -33,6 +31,7 @@ __global__ void compute_hist(char *dev_text, int *dev_hist, int chunk_size, int 
 	}	
 
 #if DEBUG	
+	printf("tid: %d, block: %d, start: %d, end: %d, hist offset: %d\n", tid, blockIdx.x, i, text_end, offset);	
 	for(i = offset; i < ALPHABET_SIZE + offset; i++)  
 		if(hist[i] != 0)
 			printf("%d: %c: %d\n", tid, (i%ALPHABET_SIZE)+ ASCII_CONST, hist[i]); 
@@ -57,6 +56,12 @@ __global__ void sum_hist(int *dev_hist, int blocks) {
 			printf("%d\t\t", dev_hist[i + (j * ALPHABET_SIZE)]);
 		printf("\n");
 	}
+	printf("\nsum of characters:\n");
+	for(i = 0; i < ALPHABET_SIZE; i++) {
+		for(j = 1; j < blocks; j++) 
+			dev_hist[i] += dev_hist[i + j * ALPHABET_SIZE];
+		printf("%c: %d\n", i + 97, dev_hist[i]);
+	}
 }
 
 int main(int argc, char **argv) {
@@ -64,7 +69,7 @@ int main(int argc, char **argv) {
 	char c;
 	char *text, 
 	     *dev_text;
-	int *dev_hist = 0;
+	int *dev_hist;
 	int BLOCKS = 0, 
 	    THREADS = 0, 
 	    i = 0,
@@ -99,7 +104,7 @@ int main(int argc, char **argv) {
 	cudaMalloc((void **) &dev_text, sz * sizeof(char));
 
 	cudaMemcpy(dev_text, text, sz * sizeof(char), cudaMemcpyHostToDevice);
-	cudaMemset(dev_hist, 0, BLOCKS*ALPHABET_SIZE*sizeof(int));
+	cudaMemset(dev_hist, 0, BLOCKS*ALPHABET_SIZE * sizeof(int));
 
 	printf("blocks: %d\n", BLOCKS);
 	printf("threads per block: %d\n", MAX_THREADS);
@@ -108,9 +113,9 @@ int main(int argc, char **argv) {
 	compute_hist<<<BLOCKS, MAX_THREADS,MAX_THREADS * ALPHABET_SIZE * sizeof(int)>>>(dev_text, dev_hist, CHUNK_SIZE, (BLOCKS * MAX_THREADS + THREADS) * ALPHABET_SIZE);
 	cudaDeviceSynchronize();
 
-	cudaMemcpy(hist, dev_hist, BLOCKS * ALPHABET_SIZE * sizeof(int), cudaMemcpyDeviceToHost);
 	sum_hist<<<1,1>>>(dev_hist, BLOCKS);
 	cudaDeviceSynchronize();
+	cudaMemcpy(hist, dev_hist, ALPHABET_SIZE * sizeof(int), cudaMemcpyDeviceToHost);
 
 	cudaFree(dev_hist);
 	cudaFree(dev_text);
