@@ -5,8 +5,8 @@
 #include <math.h>
 
 #define ALPHABET_SIZE 26
-#define CHUNK_SIZE 26 
-#define MAX_THREADS 2
+#define CHUNK_SIZE 256
+#define MAX_THREADS 8
 #define ASCII_CONST 97
 #define DEBUG 0
 
@@ -46,6 +46,7 @@ __global__ void compute_hist(char *dev_text, int *dev_hist, int chunk_size, int 
 
 __global__ void sum_hist(int *dev_hist, int blocks) {
 	int i, j;
+#if DEBUG
 	printf("total blocks: %d\n\n", blocks);
 	for(i = 0; i < blocks; i++)
 		printf("\tblock %d:", i);
@@ -56,6 +57,7 @@ __global__ void sum_hist(int *dev_hist, int blocks) {
 			printf("%d\t\t", dev_hist[i + (j * ALPHABET_SIZE)]);
 		printf("\n");
 	}
+#endif
 	printf("\nsum of characters:\n");
 	for(i = 0; i < ALPHABET_SIZE; i++) {
 		for(j = 1; j < blocks; j++) 
@@ -74,6 +76,8 @@ int main(int argc, char **argv) {
 	    THREADS = 0, 
 	    i = 0,
 	    sz = 0;
+	float time;
+	cudaEvent_t start, stop;
 
 	if(argc != 2) {
 		printf("enter file name as first argument\n");
@@ -85,7 +89,11 @@ int main(int argc, char **argv) {
 	printf("length of file: %d\n", sz = ftell(fp)+1);
 	fseek(fp, 0, SEEK_SET);
 	text = (char *)malloc(sz * sizeof(char));
-
+	
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
+	cudaEventRecord(start, 0);
+	
 	while((c = fgetc(fp)) != EOF) 
 		text[i++] = tolower(c);
 	text[i] = '\0';
@@ -111,11 +119,17 @@ int main(int argc, char **argv) {
 	printf("leftover threads: %d\n", THREADS+MAX_THREADS);
 
 	compute_hist<<<BLOCKS, MAX_THREADS,MAX_THREADS * ALPHABET_SIZE * sizeof(int)>>>(dev_text, dev_hist, CHUNK_SIZE, (BLOCKS * MAX_THREADS + THREADS) * ALPHABET_SIZE);
+
 	cudaDeviceSynchronize();
 
 	sum_hist<<<1,1>>>(dev_hist, BLOCKS);
 	cudaDeviceSynchronize();
 	cudaMemcpy(hist, dev_hist, ALPHABET_SIZE * sizeof(int), cudaMemcpyDeviceToHost);
+	
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&time, start, stop);
+	printf("time to run: %3.3f ms\n", time);
 
 	cudaFree(dev_hist);
 	cudaFree(dev_text);
