@@ -43,25 +43,27 @@ __global__ void compute_hist(char *dev_text, int *dev_hist, int chunk_size, int 
 }
 
 __global__ void sum_hist(int *dev_hist, int blocks) {
-	int i, j;
+	unsigned int tid = blockDim.x * blockIdx.x + threadIdx.x;
+	int i;
 #if DEBUG
-	printf("total blocks: %d\n\n", blocks);
-	for(i = 0; i < blocks; i++)
-		printf("\tblock %d:", i);
-	printf("\n");
-	for(i = 0; i < ALPHABET_SIZE; i++) {
-		printf("%c:\t", i + ASCII_CONST);
-		for(j = 0; j < blocks; j++)
-			printf("%d\t\t", dev_hist[i + (j * ALPHABET_SIZE)]);
+	// small number of blocks to keep formatting
+	if(tid == 0) {
+		int j;
+		printf("total blocks: %d\n\n", blocks);
+		for(i = 0; i < blocks; i++)
+			printf("\tblock %d:", i);
 		printf("\n");
+		for(i = 0; i < ALPHABET_SIZE; i++) {
+			printf("%c:\t", i + ASCII_CONST);
+			for(j = 0; j < blocks; j++)
+				printf("%d\t\t", dev_hist[i + (j * ALPHABET_SIZE)]);
+				printf("\n");
+		}
 	}
 #endif
-	printf("\nsum of characters:\n");
-	for(i = 0; i < ALPHABET_SIZE; i++) {
-		for(j = 1; j < blocks; j++) 
-			dev_hist[i] += dev_hist[i + j * ALPHABET_SIZE];
-		printf("%c: %d\n", i + 97, dev_hist[i]);
-	}
+	for(i = 1; i < blocks; i++) 
+		dev_hist[tid] += dev_hist[tid + i * ALPHABET_SIZE];
+	
 }
 
 int main(int argc, char **argv) {
@@ -71,7 +73,8 @@ int main(int argc, char **argv) {
 	int *dev_hist;
 	int BLOCKS = 0, 
 	    THREADS = 0, 
-	    sz = 0;
+	    sz = 0,
+	    i;
 	float time_1, time_2;
 	cudaEvent_t start, stop;
 
@@ -89,7 +92,7 @@ int main(int argc, char **argv) {
 	fread(text, sz, 1, fp);
 
 	printf("chunk size: %d\n", CHUNK_SIZE);
-	printf("total threads: %d\n",THREADS = ceil(sz/CHUNK_SIZE));	
+	printf("total threads: %d\n", THREADS = ceil(sz/CHUNK_SIZE));	
 
 	while(THREADS > 0) {
 		THREADS -= MAX_THREADS;
@@ -113,7 +116,6 @@ int main(int argc, char **argv) {
 	cudaEventRecord(start, 0);
 
 	compute_hist<<<BLOCKS, MAX_THREADS,MAX_THREADS * ALPHABET_SIZE * sizeof(int)>>>(dev_text, dev_hist, CHUNK_SIZE, (BLOCKS * MAX_THREADS + THREADS) * ALPHABET_SIZE);
-
 	cudaDeviceSynchronize();
 
 	cudaEventRecord(stop, 0);
@@ -122,8 +124,7 @@ int main(int argc, char **argv) {
 
 	cudaEventRecord(start, 0);
 
-	sum_hist<<<1,1>>>(dev_hist, BLOCKS);
-
+	sum_hist<<<1,ALPHABET_SIZE>>>(dev_hist, BLOCKS);
 	cudaDeviceSynchronize();
 
 	cudaEventRecord(stop, 0);
@@ -131,10 +132,13 @@ int main(int argc, char **argv) {
 	cudaEventElapsedTime(&time_2, start, stop);
 
 	cudaMemcpy(hist, dev_hist, ALPHABET_SIZE * sizeof(int), cudaMemcpyDeviceToHost);
+	printf("\nsum of characters:\n");
+	for(i = 0; i < ALPHABET_SIZE; i++)
+		printf("%c: %d\n", i + 97, hist[i]);
 	
 	printf("time to make buckets: \t%3.3f ms\n", time_1);
 	printf("time to sum hist: \t%3.3f ms\n", time_2);
-	printf("time to run: \t\t%3.3f ms\n", time_1 + time_2);
+	printf("total time to run: \t%3.3f ms\n", time_1 + time_2);
 
 	cudaFree(dev_hist);
 	cudaFree(dev_text);
