@@ -5,27 +5,28 @@
 #include <math.h>
 
 #define ALPHABET_SIZE 26
-#define CHUNK_SIZE 256
-#define MAX_THREADS 8
+#define CHUNK_SIZE 64
+#define MAX_THREADS 64
 #define ASCII_CONST 97
 #define DEBUG 0
 
-__global__ void compute_hist(char *dev_text, int *dev_hist, int chunk_size, int size) {
+__global__ void compute_hist(char *dev_text, int *dev_hist, int chunk_size, int size, int max) {
 	unsigned int tid = blockDim.x * blockIdx.x + threadIdx.x;
 	extern __shared__ int hist[];
 	int i = tid * chunk_size,
-	    j = 0,
 	    text_end = i + chunk_size,
 	    offset = threadIdx.x * ALPHABET_SIZE,
 	    block_start = blockIdx.x * ALPHABET_SIZE; 
 	int c = 0;
-
+	if(tid > max)
+		return;
 	for(;i<text_end;i++) {
 		if((c = dev_text[i]) == '\0') 
 			break;
-		c = (c|(1 << 5)) - ASCII_CONST;//-= ASCII_CONST;
-		if(c >= 0 && c < ALPHABET_SIZE) 
-			hist[c+offset]++;
+		c = (c|(1 << 5)) - ASCII_CONST;
+		if(c >= 0)  
+			if(c < ALPHABET_SIZE)
+				hist[c+offset]++;
 	}	
 
 #if DEBUG	
@@ -35,18 +36,15 @@ __global__ void compute_hist(char *dev_text, int *dev_hist, int chunk_size, int 
 			printf("%d: %c: %d\n", tid, (i%ALPHABET_SIZE)+ ASCII_CONST, hist[i]); 
 #endif
 	__syncthreads();
-
-	if(tid%MAX_THREADS == 0) 
-		for(i = 0; i < ALPHABET_SIZE; i++) 
-			for(j = 0; j < MAX_THREADS; j++)
-				dev_hist[block_start + i] += hist[i+(j*ALPHABET_SIZE)];
+	for(i = 0; i < ALPHABET_SIZE; i++) 
+		atomicAdd(&dev_hist[i+block_start], hist[i+offset]);
 }
 
 __global__ void sum_hist(int *dev_hist, int blocks) {
 	unsigned int tid = blockDim.x * blockIdx.x + threadIdx.x;
 	int i;
 #if DEBUG
-	// small number of blocks to keep formatting
+	// keep number of blocks small to maintain formatting
 	if(tid == 0) {
 		int j;
 		printf("total blocks: %d\n\n", blocks);
@@ -93,6 +91,7 @@ int main(int argc, char **argv) {
 
 	printf("chunk size: %d\n", CHUNK_SIZE);
 	printf("total threads: %d\n", THREADS = ceil(sz/CHUNK_SIZE));	
+	int max = THREADS;
 
 	while(THREADS > 0) {
 		THREADS -= MAX_THREADS;
@@ -115,7 +114,7 @@ int main(int argc, char **argv) {
 	cudaEventCreate(&stop);
 	cudaEventRecord(start, 0);
 
-	compute_hist<<<BLOCKS, MAX_THREADS,MAX_THREADS * ALPHABET_SIZE * sizeof(int)>>>(dev_text, dev_hist, CHUNK_SIZE, (BLOCKS * MAX_THREADS + THREADS) * ALPHABET_SIZE);
+	compute_hist<<<BLOCKS, MAX_THREADS,MAX_THREADS * ALPHABET_SIZE * sizeof(int)>>>(dev_text, dev_hist, CHUNK_SIZE, (BLOCKS * MAX_THREADS + THREADS) * ALPHABET_SIZE, max);
 	cudaDeviceSynchronize();
 
 	cudaEventRecord(stop, 0);
