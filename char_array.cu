@@ -10,10 +10,10 @@
 #define ASCII_CONST 97
 #define DEBUG 0
 
-__global__ void compute_hist(char *dev_text, int *dev_hist, int chunk_size, int size, int max) {
+__global__ void compute_hist(char *dev_text, unsigned int *dev_hist, unsigned int chunk_size, unsigned int max) {
 	unsigned int tid = blockDim.x * blockIdx.x + threadIdx.x;
 	extern __shared__ int hist[];
-	int i = tid * chunk_size,
+	unsigned int i = tid * chunk_size,
 	    text_end = i + chunk_size,
 	    offset = threadIdx.x * ALPHABET_SIZE,
 	    block_start = blockIdx.x * ALPHABET_SIZE; 
@@ -40,7 +40,7 @@ __global__ void compute_hist(char *dev_text, int *dev_hist, int chunk_size, int 
 		atomicAdd(&dev_hist[i+block_start], hist[i+offset]);
 }
 
-__global__ void sum_hist(int *dev_hist, int blocks) {
+__global__ void sum_hist(unsigned int *dev_hist, unsigned int blocks) {
 	unsigned int tid = blockDim.x * blockIdx.x + threadIdx.x;
 	int i;
 #if DEBUG
@@ -60,21 +60,23 @@ __global__ void sum_hist(int *dev_hist, int blocks) {
 	}
 #endif
 	for(i = 1; i < blocks; i++) 
-		dev_hist[tid] += dev_hist[tid + i * ALPHABET_SIZE];
+		//dev_hist[tid] += dev_hist[tid + i * ALPHABET_SIZE];
+		atomicAdd(&dev_hist[tid], dev_hist[tid +i * ALPHABET_SIZE]);
 	
 }
 
 int main(int argc, char **argv) {
-	FILE *fp;
-	char *text, 
-	     *dev_text;
-	int *dev_hist;
-	int BLOCKS = 0, 
-	    THREADS = 0, 
-	    sz = 0,
-	    i;
-	float time_1, time_2;
-	cudaEvent_t start, stop;
+	FILE 	*fp;
+	char 	*text, 
+	     	*dev_text;
+	unsigned int 	*dev_hist;
+	int 	BLOCKS = 0, 
+	    	THREADS = 0, 
+	    	sz = 0,
+	    	i;
+	float 	time_1, time_2;
+	cudaEvent_t start, 
+		    stop;
 
 	if(argc != 2) {
 		printf("enter file name as first argument\n");
@@ -114,12 +116,11 @@ int main(int argc, char **argv) {
 	cudaEventCreate(&stop);
 	cudaEventRecord(start, 0);
 
-	compute_hist<<<BLOCKS, MAX_THREADS,MAX_THREADS * ALPHABET_SIZE * sizeof(int)>>>(dev_text, dev_hist, CHUNK_SIZE, (BLOCKS * MAX_THREADS + THREADS) * ALPHABET_SIZE, max);
-	cudaDeviceSynchronize();
-
+	compute_hist<<<BLOCKS, MAX_THREADS, MAX_THREADS * ALPHABET_SIZE * sizeof(int)>>>(dev_text, dev_hist, CHUNK_SIZE, max);
 	cudaEventRecord(stop, 0);
 	cudaEventSynchronize(stop);
 	cudaEventElapsedTime(&time_1, start, stop);
+	cudaDeviceSynchronize();
 
 	cudaEventRecord(start, 0);
 
